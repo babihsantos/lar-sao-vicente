@@ -1,0 +1,57 @@
+name: Manter Streamlit Acordado
+
+on:
+  schedule:
+    # Roda a cada 6 horas (o Streamlit dorme após 12h de inatividade)
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Permite rodar manualmente para testar
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install chromium
+
+      - name: Executar script para acordar o app
+        env:
+          APP_URL: "https://lar-sao-vicente.streamlit.app/"
+        run: |
+          cat << 'EOF' > wakeup.js
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage();
+            console.log(`Acessando: ${process.env.APP_URL}`);
+            
+            try {
+              await page.goto(process.env.APP_URL, { waitUntil: 'networkidle', timeout: 60000 });
+              
+              // Tenta encontrar o botão "Yes, get this app back up!"
+              const btn = page.locator('button:has-text("get this app back up")');
+              
+              if (await btn.count() > 0) {
+                console.log('App estava dormindo. Clicando para acordar...');
+                await btn.click();
+                await page.waitForTimeout(5000); // Espera 5 segundos para carregar
+                console.log('App acordado com sucesso!');
+              } else {
+                console.log('App já estava acordado.');
+              }
+            } catch (e) {
+              console.error('Erro ao tentar acordar o app:', e);
+            } finally {
+              await browser.close();
+            }
+          })();
+          EOF
+          node wakeup.js
