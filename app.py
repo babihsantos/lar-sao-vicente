@@ -915,4 +915,133 @@ function renderRelatorios() {
     ctx.scale(dpr, dpr); ctx.clearRect(0,0,W,H);
     const pad = { l: 50, r: 20, t: 20, b: 50 };
     const max = Math.max(1, ...meses.flatMap(m => tipos.map(t => fluxoMap[m][t] || 0)));
-    const groupW = (W - pad.l - pad.r)
+    const groupW = (W - pad.l - pad.r) / Math.max(1, meses.length);
+    ctx.font = "11px Inter, sans-serif";
+    ctx.fillStyle = "#94a3b8"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let g = 0; g <= 4; g++) {
+      const y = pad.t + (H - pad.t - pad.b) * (g / 4);
+      ctx.fillText(String(Math.round(max * (1 - g/4))), pad.l - 8, y);
+      ctx.strokeStyle = "rgba(148,163,184,.15)";
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    }
+    const bw = (groupW * 0.8) / tipos.length;
+    meses.forEach((mes, i) => {
+      const x0 = pad.l + i * groupW + groupW * 0.1;
+      tipos.forEach((t, j) => {
+        const v = fluxoMap[mes][t] || 0;
+        const h = (v / max) * (H - pad.t - pad.b);
+        ctx.fillStyle = cores[t];
+        roundRect(ctx, x0 + j * bw, H - pad.b - h, bw - 2, h, 4); ctx.fill();
+      });
+      ctx.fillStyle = "#cbd5e1"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText(mes, x0 + (bw * tipos.length) / 2, H - pad.b + 8);
+    });
+    // legend
+    let lx = pad.l, ly = 6;
+    tipos.forEach(t => {
+      ctx.fillStyle = cores[t]; ctx.fillRect(lx, ly, 10, 10);
+      ctx.fillStyle = "#cbd5e1"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(t, lx + 14, ly + 5);
+      lx += ctx.measureText(t).width + 40;
+    });
+  }, 30);
+  return html;
+}
+
+function renderHistorico() {
+  const mov = loadMov();
+  if (!mov.length) return msg("info", "Sem movimentos.");
+  let html = sectionTitle("🕓 Histórico de Movimentos");
+  html += `<div class="form-card" style="margin-bottom:1rem"><div class="grid-form">
+    <div><label class="fld">Tipo</label><select id="h_tipo" onchange="filtrarHist()"><option>Todos</option><option>Entrada</option><option>Saída</option><option>Eliminação</option><option>Edição</option></select></div>
+    <div><label class="fld">🔎 Pesquisar</label><input type="text" id="h_busca" oninput="filtrarHist()"></div>
+  </div></div>`;
+  html += `<div id="h_metrics"></div><div id="h_tabela"></div>`;
+  html += `<div class="toolbar no-print"><button class="btn btn-green" onclick="window.print()">📄 Imprimir / Salvar PDF</button><button class="btn btn-primary" onclick="exportarCSVMov()">⬇️ Exportar CSV</button></div>`;
+  setTimeout(filtrarHist, 20);
+  return html;
+}
+function filtrarHist() {
+  const mov = loadMov();
+  const tipo = document.getElementById("h_tipo")?.value || "Todos";
+  const busca = (document.getElementById("h_busca")?.value || "").toLowerCase();
+  let df = mov.filter(m => (tipo === "Todos" || m.tipo === tipo)
+    && (!busca || m.item.toLowerCase().includes(busca) || (m.pessoa||"").toLowerCase().includes(busca)));
+  df.sort((a,b) => (b.data||"").localeCompare(a.data||""));
+  const met = document.getElementById("h_metrics");
+  if (met) met.innerHTML = kpiCard("🕓","Movimentos filtrados",df.length,GRAD.roxo);
+  const tb = document.getElementById("h_tabela");
+  if (tb) tb.innerHTML = renderTabela(df, { cols:["data","tipo","item","categoria","quantidade","pessoa","observacoes"], labels:{data:"Data/Hora",tipo:"Tipo",item:"Item",categoria:"Categoria",quantidade:"Qtd",pessoa:"Pessoa",observacoes:"Obs."} });
+}
+function exportarCSVMov() {
+  const mov = loadMov();
+  const cols = ["data","tipo","item","categoria","quantidade","pessoa","observacoes"];
+  const rows = [cols.join(",")].concat(mov.map(i => cols.map(c => `"${String(i[c]??"").replace(/"/g,'""')}"`).join(",")));
+  const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = `movimentos_${hojeISO()}.csv`; a.click();
+}
+
+function renderApagar() {
+  const inv = loadInv();
+  if (!inv.length) return msg("info", "Sem dados.");
+  let html = sectionTitle("🗑️ Apagar Item");
+  html += msg("warn", "⚠️ Ação irreversível. Para saída parcial usa <b>📤 Dar Baixa</b>.");
+  html += `<div class="form-card">
+    <label class="fld">Item</label>
+    <select id="a_sel">${inv.map(i=>`<option value="${i.id}">${esc(i.item)} — ${esc(i.categoria)} | qtd: ${i.quantidade}</option>`).join("")}</select>
+    <label class="chk" style="margin-top:.8rem"><input type="checkbox" id="a_conf" onchange="document.getElementById('a_btn').disabled=!this.checked"> Confirmo que quero eliminar permanentemente.</label>
+    <div id="apagar_msg"></div>
+    <button class="btn btn-red btn-block" id="a_btn" disabled style="margin-top:.8rem" onclick="submitApagar()">🗑️ Eliminar</button>
+  </div>`;
+  return html;
+}
+function submitApagar() {
+  const id = document.getElementById("a_sel").value;
+  const r = apagarItem(id);
+  document.getElementById("apagar_msg").innerHTML = r.ok ? msg("ok", "✅ " + r.msg) : msg("err", "❌ " + r.msg);
+  if (r.ok) setTimeout(() => render("apagar"), 700);
+}
+
+/* =========================================================
+   ROUTER / RENDER
+========================================================= */
+const VIEWS = {
+  dashboard: renderDashboard,
+  doacao: renderDoacao,
+  inventario: renderInventario,
+  baixa: renderBaixa,
+  validade: renderValidade,
+  estoque: renderEstoque,
+  doadores: renderDoadores,
+  relatorios: renderRelatorios,
+  historico: renderHistorico,
+  apagar: renderApagar,
+};
+function render(view) {
+  currentView = view;
+  document.querySelectorAll(".menu-btn").forEach(b => b.classList.toggle("active", b.dataset.id === view));
+  const el = document.getElementById("view");
+  el.innerHTML = VIEWS[view] ? VIEWS[view]() : msg("info", "View não encontrada.");
+}
+function buildMenu() {
+  document.getElementById("menu").innerHTML = MENU.map(m =>
+    `<button class="menu-btn" data-id="${m.id}" onclick="render('${m.id}')">${m.icon} ${m.label}</button>`
+  ).join("");
+}
+function tickClock() {
+  const now = new Date();
+  const br = now.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const h = document.getElementById("clock");
+  if (h) h.textContent = `🕐 ${br.split(" ")[1] || ""} · Brasília`;
+  const hh = document.getElementById("hero-clock");
+  if (hh) hh.textContent = `🕐 ${br} (Brasília)`;
+}
+/* INIT */
+buildMenu();
+render("dashboard");
+tickClock();
+setInterval(tickClock, 1000);
+</script>
+</body>
+</html>
